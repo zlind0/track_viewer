@@ -141,7 +141,7 @@ struct TrackMapView: NSViewRepresentable {
             let points = appState.currentDayPoints
             guard points.count >= 2 else { return }
 
-            let allCoords = points.map(\.coordinate)
+            let allCoords = points.map(\.wgs84Coordinate)
             let down      = CurveUtils.downsample(allCoords, maxPoints: 600)
             let smooth    = CurveUtils.catmullRomSpline(coordinates: down, pointsPerSegment: 6)
 
@@ -178,7 +178,7 @@ struct TrackMapView: NSViewRepresentable {
             switch appState.viewMode {
             case .singleDay, .singleDayFromMulti:
                 for pt in appState.currentDayPoints {
-                    let mp = MKMapPoint(pt.coordinate)
+                    let mp = MKMapPoint(pt.wgs84Coordinate)
                     rect = rect.union(MKMapRect(x: mp.x, y: mp.y, width: 0, height: 0))
                 }
             case .multiDay:
@@ -224,8 +224,9 @@ struct TrackMapView: NSViewRepresentable {
             let threshold = 0.002   // ~200m in degrees
 
             for pt in points {
-                let dLat = pt.latitude  - coordinate.latitude
-                let dLon = pt.longitude - coordinate.longitude
+                let wgs = pt.wgs84Coordinate
+                let dLat = wgs.latitude  - coordinate.latitude
+                let dLon = wgs.longitude - coordinate.longitude
                 let d    = dLat * dLat + dLon * dLon
                 if d < bestDist {
                     bestDist = d

@@ -28,6 +28,11 @@ struct TrackPoint: Identifiable, Sendable {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 
+    /// GCJ-02 → WGS-84 corrected coordinate, safe to pass to MapKit.
+    var wgs84Coordinate: CLLocationCoordinate2D {
+        CoordinateConverter.gcj02ToWgs84(coordinate)
+    }
+
     var localTimeString: String {
         let tz = TimeZone(secondsFromGMT: timezoneOffsetHours * 3600) ?? .current
         let formatter = DateFormatter()

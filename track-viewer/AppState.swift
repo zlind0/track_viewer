@@ -187,7 +187,7 @@ final class AppState {
 
         var coords: [String: [CLLocationCoordinate2D]] = [:]
         for (date, points) in raw {
-            let allCoords = points.map(\.coordinate)
+            let allCoords = points.map(\.wgs84Coordinate)
             let down = CurveUtils.downsample(allCoords, maxPoints: 500)
             coords[date] = CurveUtils.catmullRomSpline(coordinates: down, pointsPerSegment: 4)
         }
