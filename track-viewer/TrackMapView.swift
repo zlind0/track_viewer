@@ -42,6 +42,13 @@ final class TrackMapViewNS: MKMapView {
     }
 }
 
+// MARK: - HoverPointAnnotation
+
+final class HoverPointAnnotation: NSObject, MKAnnotation {
+    @objc dynamic var coordinate: CLLocationCoordinate2D
+    init(coordinate: CLLocationCoordinate2D) { self.coordinate = coordinate }
+}
+
 // MARK: - TrackMapView (NSViewRepresentable)
 
 struct TrackMapView: NSViewRepresentable {
@@ -65,6 +72,7 @@ struct TrackMapView: NSViewRepresentable {
             Task { @MainActor in
                 coord?.appState.trackHoverInfo = nil
                 coord?.appState.dayHoverInfo   = nil
+                coord?.removeHoverAnnotation()
             }
         }
         mapView.onMouseClicked = { [weak coord = context.coordinator] coordinate in
@@ -90,6 +98,9 @@ struct TrackMapView: NSViewRepresentable {
         private var lastMultiEnd:     Date?
         private var lastPointCount:   Int = 0
         private var lastMultiDayCount: Int = 0
+
+        // Hover point annotation (single-day mode)
+        private var hoverAnnotation: HoverPointAnnotation?
 
         init(appState: AppState) { self.appState = appState }
 
@@ -120,6 +131,7 @@ struct TrackMapView: NSViewRepresentable {
             lastPointCount    = pointCount
             lastMultiDayCount = multiCount
 
+            removeHoverAnnotation()  // clear stale hover when track changes
             mapView.removeOverlays(mapView.overlays)
 
             switch mode {
@@ -234,9 +246,32 @@ struct TrackMapView: NSViewRepresentable {
                 }
             }
             if let pt = best, bestDist < threshold * threshold {
-                appState.trackHoverInfo = TrackHoverInfo(point: pt, screenPosition: screenPoint)
+                // Convert the track point's geographic coord to map-view screen position
+                let wgs = pt.wgs84Coordinate
+                let ptScreen: CGPoint = mapView.map {
+                    $0.convert(wgs, toPointTo: $0)
+                } ?? screenPoint
+
+                appState.trackHoverInfo = TrackHoverInfo(point: pt, screenPosition: ptScreen)
+
+                // Place or move the enlarged dot annotation
+                if let ann = hoverAnnotation {
+                    ann.coordinate = wgs
+                } else {
+                    let ann = HoverPointAnnotation(coordinate: wgs)
+                    mapView?.addAnnotation(ann)
+                    hoverAnnotation = ann
+                }
             } else {
                 appState.trackHoverInfo = nil
+                removeHoverAnnotation()
+            }
+        }
+
+        func removeHoverAnnotation() {
+            if let ann = hoverAnnotation {
+                mapView?.removeAnnotation(ann)
+                hoverAnnotation = nil
             }
         }
 
@@ -300,6 +335,31 @@ struct TrackMapView: NSViewRepresentable {
 
         // MARK: MKMapViewDelegate
 
+        func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+            guard annotation is HoverPointAnnotation else { return nil }
+            let id   = "hoverDot"
+            let view = mapView.dequeueReusableAnnotationView(withIdentifier: id)
+                    ?? MKAnnotationView(annotation: annotation, reuseIdentifier: id)
+            view.annotation      = annotation
+            view.canShowCallout  = false
+            view.centerOffset    = .zero
+
+            let size: CGFloat = 12
+            view.frame.size = CGSize(width: size, height: size)
+            let img = NSImage(size: NSSize(width: size, height: size), flipped: false) { _ in
+                let inset = NSRect(x: 2, y: 2, width: size - 4, height: size - 4)
+                let circle = NSBezierPath(ovalIn: inset)
+                circle.lineWidth = 2
+                NSColor.white.withAlphaComponent(0.95).setFill()
+                circle.fill()
+                NSColor(white: 0.25, alpha: 0.85).setStroke()
+                circle.stroke()
+                return true
+            }
+            view.image = img
+            return view
+        }
+
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             if let grad = overlay as? GradientPolylineOverlay {
                 return GradientPolylineRenderer(overlay: grad)
@@ -317,10 +377,32 @@ struct TrackMapView: NSViewRepresentable {
     }
 }
 
+// MARK: - CalloutBubble (rounded rect + downward arrow)
+
+struct CalloutBubble: Shape {
+    var cornerRadius: CGFloat = 8
+    var arrowWidth:   CGFloat = 14
+    var arrowHeight:  CGFloat = 8
+
+    func path(in rect: CGRect) -> Path {
+        let body = CGRect(x: rect.minX, y: rect.minY,
+                          width: rect.width, height: rect.height - arrowHeight)
+        var path = Path(roundedRect: body, cornerRadius: cornerRadius)
+        let mid  = rect.midX
+        path.move(to:    CGPoint(x: mid - arrowWidth / 2, y: body.maxY))
+        path.addLine(to: CGPoint(x: mid,                  y: rect.maxY))
+        path.addLine(to: CGPoint(x: mid + arrowWidth / 2, y: body.maxY))
+        path.closeSubpath()
+        return path
+    }
+}
+
 // MARK: - Hover Tooltip Overlays (SwiftUI)
 
 struct TrackHoverTooltip: View {
     let info: TrackHoverInfo
+
+    private let arrowHeight: CGFloat = 8
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -343,9 +425,13 @@ struct TrackHoverTooltip: View {
             .font(.system(size: 11))
         }
         .padding(8)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-        .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
+        .padding(.bottom, arrowHeight)  // reserve space for arrow tip
         .frame(width: 190)
+        .background {
+            CalloutBubble(cornerRadius: 8, arrowWidth: 14, arrowHeight: arrowHeight)
+                .fill(.regularMaterial)
+                .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
+        }
     }
 }
 
@@ -376,11 +462,13 @@ struct MapContainer: View {
         ZStack(alignment: .topLeading) {
             TrackMapView(appState: appState)
 
-            // Track-point hover tooltip
+            // Track-point hover tooltip — pinned to the track point, arrow pointing down
             if let info = appState.trackHoverInfo {
                 TrackHoverTooltip(info: info)
-                    .position(x: info.screenPosition.x + 110,
-                              y: info.screenPosition.y - 50)
+                    // center.y = pointY - half-height so the arrow tip lands on the point
+                    // estimated total height ≈ 88 pt (content 72 + padding 8 + arrow 8)
+                    .position(x: info.screenPosition.x,
+                              y: info.screenPosition.y - 44)
                     .allowsHitTesting(false)
             }
 
