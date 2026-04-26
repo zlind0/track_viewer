@@ -1,0 +1,78 @@
+# .gitignore for an Xcode macOS Swift project
+# 忽略 Xcode 构建产物、用户配置、SwiftPM/CocoaPods 缓存以及大文件样本
+
+### macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+### Xcode
+# Build / derived
+build/
+DerivedData/
+
+# User-specific settings
+xcuserdata/
+*.xcuserdatad
+*.xcuserstate
+
+# Workspace user data
+*.xcworkspace/xcuserdata/
+
+# Scheme / workspace generated files
+*.xcscmblueprint
+*.xccheckout
+
+# Misc Xcode artifacts
+*.moved-aside
+*.hmap
+*.ipa
+*.xcarchive
+*.dSYM
+*.app
+*.framework
+*.xcframework
+
+### Swift Package Manager
+.build/
+Packages/
+.swiftpm/
+# Package.resolved is usually committed for apps; uncomment to ignore
+# Package.resolved
+
+### CocoaPods
+Pods/
+
+### Carthage
+Carthage/Build/
+
+### fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots
+
+### IDEs / Editors
+.idea/
+.vscode/
+*.swp
+*~
+*.sublime-project
+*.sublime-workspace
+
+### Common generated / temporary
+*.lock
+*.log
+*.tmp
+
+### Large data / example files (ignore anywhere in repo)
+**/alldata.csv
+**/alldata.gpx
+**/exampledata/
+
+# Optional: ignore local environment files
+.env
+.env.local
+
+# Node / frontend (if present)
+node_modules/
+",

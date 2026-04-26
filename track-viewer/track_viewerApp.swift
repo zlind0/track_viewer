@@ -1,10 +1,3 @@
-//
-//  track_viewerApp.swift
-//  track-viewer
-//
-//  Created by lin on 2026/04/26.
-//
-
 import SwiftUI
 
 @main
@@ -12,6 +5,12 @@ struct track_viewerApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+        }
+        .windowStyle(.titleBar)
+        .windowToolbarStyle(.unified)
+        .defaultSize(width: 1280, height: 800)
+        .commands {
+            CommandGroup(replacing: .newItem) {}   // hide File > New
         }
     }
 }
