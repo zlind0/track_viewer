@@ -228,44 +228,63 @@ struct TrackMapView: NSViewRepresentable {
 
         private func updateTrackHover(coordinate: CLLocationCoordinate2D, screenPoint: CGPoint) {
             let points = appState.currentDayPoints
-            guard !points.isEmpty else { return }
+            guard !points.isEmpty, let mv = mapView else { return }
 
-            // Find nearest point by lat/lon distance
-            var best: TrackPoint?
-            var bestDist = Double.greatestFiniteMagnitude
-            let threshold = 0.002   // ~200m in degrees
+            // Convert all GPS points to screen coords once
+            let screenPts = points.map { mv.convert($0.wgs84Coordinate, toPointTo: mv) }
 
-            for pt in points {
-                let wgs = pt.wgs84Coordinate
-                let dLat = wgs.latitude  - coordinate.latitude
-                let dLon = wgs.longitude - coordinate.longitude
-                let d    = dLat * dLat + dLon * dLon
-                if d < bestDist {
-                    bestDist = d
-                    best     = pt
+            // Find minimum distance from mouse to any track segment
+            let pixelThreshold: CGFloat = 20
+            var bestIndex = 0
+            var bestDistSq: CGFloat = .greatestFiniteMagnitude
+
+            for i in 0 ..< screenPts.count - 1 {
+                let dsq = segmentDistanceSq(p: screenPoint, a: screenPts[i], b: screenPts[i + 1])
+                if dsq < bestDistSq {
+                    bestDistSq = dsq
+                    // Pick whichever endpoint of this segment is closer to the mouse
+                    let daSq = ptDistSq(screenPoint, screenPts[i])
+                    let dbSq = ptDistSq(screenPoint, screenPts[i + 1])
+                    bestIndex = daSq <= dbSq ? i : i + 1
                 }
             }
-            if let pt = best, bestDist < threshold * threshold {
-                // Convert the track point's geographic coord to map-view screen position
-                let wgs = pt.wgs84Coordinate
-                let ptScreen: CGPoint = mapView.map {
-                    $0.convert(wgs, toPointTo: $0)
-                } ?? screenPoint
+            // Handle single-point edge case
+            if screenPts.count == 1 {
+                bestDistSq = ptDistSq(screenPoint, screenPts[0])
+                bestIndex  = 0
+            }
 
+            if bestDistSq < pixelThreshold * pixelThreshold {
+                let pt      = points[bestIndex]
+                let ptScreen = screenPts[bestIndex]
                 appState.trackHoverInfo = TrackHoverInfo(point: pt, screenPosition: ptScreen)
 
-                // Place or move the enlarged dot annotation
+                let wgs = pt.wgs84Coordinate
                 if let ann = hoverAnnotation {
                     ann.coordinate = wgs
                 } else {
                     let ann = HoverPointAnnotation(coordinate: wgs)
-                    mapView?.addAnnotation(ann)
+                    mv.addAnnotation(ann)
                     hoverAnnotation = ann
                 }
             } else {
                 appState.trackHoverInfo = nil
                 removeHoverAnnotation()
             }
+        }
+
+        // Distance² from point p to segment ab
+        private func segmentDistanceSq(p: CGPoint, a: CGPoint, b: CGPoint) -> CGFloat {
+            let dx = b.x - a.x, dy = b.y - a.y
+            let lenSq = dx * dx + dy * dy
+            guard lenSq > 0 else { return ptDistSq(p, a) }
+            let t = max(0, min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq))
+            return ptDistSq(p, CGPoint(x: a.x + t * dx, y: a.y + t * dy))
+        }
+
+        private func ptDistSq(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
+            let dx = a.x - b.x, dy = a.y - b.y
+            return dx * dx + dy * dy
         }
 
         func removeHoverAnnotation() {
