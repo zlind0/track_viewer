@@ -46,8 +46,9 @@ final class TrackMapViewNS: MKMapView {
 
 struct TrackMapView: NSViewRepresentable {
     @Bindable var appState: AppState
+    let mapRegion: MapRegion
 
-    func makeCoordinator() -> Coordinator { Coordinator(appState: appState) }
+    func makeCoordinator() -> Coordinator { Coordinator(appState: appState, mapRegion: mapRegion) }
 
     func makeNSView(context: Context) -> TrackMapViewNS {
         let mapView = TrackMapViewNS()
@@ -70,6 +71,7 @@ struct TrackMapView: NSViewRepresentable {
         mapView.onMouseClicked = { [weak coord = context.coordinator] coordinate in
             coord?.handleMouseClicked(coordinate: coordinate)
         }
+        mapView.wantsLayer = true
         return mapView
     }
 
@@ -81,92 +83,40 @@ struct TrackMapView: NSViewRepresentable {
 
     final class Coordinator: NSObject, MKMapViewDelegate {
         var appState: AppState
+        let mapRegion: MapRegion
         weak var mapView: TrackMapViewNS?
 
-        // Cached state to avoid redundant redraws
-        private var lastMode:         ViewMode?
-        private var lastSelectedDate: String?
-        private var lastMultiStart:   Date?
-        private var lastMultiEnd:     Date?
-        private var lastPointCount:   Int = 0
-        private var lastMultiDayCount: Int = 0
+        private var lastHDREnabled: Bool = false
 
-        init(appState: AppState) { self.appState = appState }
+        // Timer polls mapView.region at 60 fps so TrackCanvas stays in sync
+        // during ALL animations and gestures (including programmatic ones).
+        private var regionTimer: Timer?
+
+        init(appState: AppState, mapRegion: MapRegion) {
+            self.appState  = appState
+            self.mapRegion = mapRegion
+            super.init()
+            regionTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) {
+                [weak self] _ in
+                guard let self, let mv = self.mapView else { return }
+                self.mapRegion.region = mv.region
+            }
+            RunLoop.main.add(regionTimer!, forMode: .common)
+        }
+
+        deinit { regionTimer?.invalidate() }
 
         // MARK: updateMap
 
         func updateMap(_ mapView: TrackMapViewNS) {
-            let mode        = appState.viewMode
-            let selDate     = appState.selectedDate
-            let multiStart  = appState.multiDayStart
-            let multiEnd    = appState.multiDayEnd
-            let pointCount  = appState.currentDayPoints.count
-            let multiCount  = appState.multiDayCoords.count
-
-            // Guard against redundant redraws
-            let sameState = mode        == lastMode
-                         && selDate     == lastSelectedDate
-                         && multiStart  == lastMultiStart
-                         && multiEnd    == lastMultiEnd
-                         && pointCount  == lastPointCount
-                         && multiCount  == lastMultiDayCount
-
-            if sameState && !appState.mapFitRequested { return }
-
-            lastMode          = mode
-            lastSelectedDate  = selDate
-            lastMultiStart    = multiStart
-            lastMultiEnd      = multiEnd
-            lastPointCount    = pointCount
-            lastMultiDayCount = multiCount
-
-            mapView.removeOverlays(mapView.overlays)
-
-            switch mode {
-            case .singleDay, .singleDayFromMulti:
-                renderSingleDay(mapView)
-            case .multiDay:
-                renderMultiDay(mapView)
+            let hdr = appState.hdrEnabled
+            if hdr != lastHDREnabled {
+                lastHDREnabled = hdr
+                mapView.layer?.wantsExtendedDynamicRangeContent = hdr
             }
-
             if appState.mapFitRequested {
                 fitMap(mapView)
                 appState.mapFitRequested = false
-            }
-        }
-
-        // MARK: Single Day
-
-        private func renderSingleDay(_ mapView: MKMapView) {
-            let points = appState.currentDayPoints
-            guard points.count >= 2 else { return }
-
-            let allCoords = points.map(\.wgs84Coordinate)
-            let down      = CurveUtils.downsample(allCoords, maxPoints: 600)
-            let smooth    = CurveUtils.catmullRomSpline(coordinates: down, pointsPerSegment: 6)
-
-            let n = smooth.count
-            let colors: [CGColor] = (0 ..< n).map { i in
-                ColorUtils.rainbowPastelCGColor(progress: Double(i) / Double(max(n - 1, 1)))
-            }
-            let overlay = GradientPolylineOverlay(coordinates: smooth, colors: colors)
-            mapView.addOverlay(overlay, level: .aboveRoads)
-        }
-
-        // MARK: Multi Day
-
-        private func renderMultiDay(_ mapView: MKMapView) {
-            let summaries = appState.multiDaySummaries
-            let total     = summaries.count
-            for (idx, summary) in summaries.enumerated() {
-                guard let coords = appState.multiDayCoords[summary.date],
-                      coords.count >= 2 else { continue }
-                let polyline = ColoredPolyline(coordinates: coords, count: coords.count)
-                polyline.lineColor = ColorUtils.discreteRainbowCGColor(index: idx, total: total)
-                polyline.dayDate   = summary.date
-                polyline.dayIndex  = idx
-                polyline.totalDays = total
-                mapView.addOverlay(polyline, level: .aboveRoads)
             }
         }
 
@@ -298,20 +248,9 @@ struct TrackMapView: NSViewRepresentable {
             }
         }
 
-        // MARK: MKMapViewDelegate
+        // MARK: MKMapViewDelegate – renderers (no track overlays; tracks drawn by TrackCanvas)
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
-            if let grad = overlay as? GradientPolylineOverlay {
-                return GradientPolylineRenderer(overlay: grad)
-            }
-            if let poly = overlay as? ColoredPolyline {
-                let renderer    = MKPolylineRenderer(polyline: poly)
-                renderer.strokeColor = NSColor(cgColor: poly.lineColor)
-                renderer.lineWidth   = 3
-                renderer.lineCap     = .round
-                renderer.lineJoin    = .round
-                return renderer
-            }
             return MKOverlayRenderer(overlay: overlay)
         }
     }
@@ -367,14 +306,31 @@ struct DayHoverTooltip: View {
     }
 }
 
-// MARK: - MapContainer (wraps map + tooltips)
+// MARK: - MapContainer (wraps map + dim + track canvas + tooltips)
 
 struct MapContainer: View {
     @Bindable var appState: AppState
+    // MapRegion is owned here so it's not re-created on AppState changes.
+    // Only TrackCanvas observes it, keeping pan/zoom redraws isolated.
+    @State private var mapRegion = MapRegion()
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            TrackMapView(appState: appState)
+            TrackMapView(appState: appState, mapRegion: mapRegion)
+
+            // SDR dim overlay: sits between the map tiles and the track canvas
+            // so tracks (drawn in TrackCanvas above this) are NOT dimmed.
+            // Adjust HDRConfig.mapDimOpacity to taste.
+            if !appState.hdrEnabled {
+                Color.black.opacity(HDRConfig.mapDimOpacity)
+                    .allowsHitTesting(false)
+            }
+
+            // Unified track canvas for both HDR and SDR.
+            // .allowedDynamicRange(.high) enables EDR (> 1.0) values in HDR mode.
+            TrackCanvas(appState: appState, mapRegion: mapRegion)
+                .allowedDynamicRange(appState.hdrEnabled ? .high : .standard)
+                .allowsHitTesting(false)
 
             // Track-point hover tooltip
             if let info = appState.trackHoverInfo {
@@ -390,6 +346,97 @@ struct MapContainer: View {
                     .position(x: info.screenPosition.x + 70,
                               y: info.screenPosition.y - 30)
                     .allowsHitTesting(false)
+            }
+        }
+    }
+}
+
+// MARK: - TrackCanvas
+// Draws tracks for both SDR and HDR modes via SwiftUI Canvas.
+// In HDR mode the call site applies .allowedDynamicRange(.high) and
+// ctx.withCGContext lets us write EDR CGColors (> 1.0) directly into
+// the wide-gamut buffer without SwiftUI Color clamping them.
+//
+// Performance: single-day gradient uses HDRConfig.gradientBandCount colour
+// bands instead of per-segment strokes, cutting draw calls from ~3600 to 32.
+
+struct TrackCanvas: View {
+    let appState: AppState
+    let mapRegion: MapRegion
+
+    var body: some View {
+        // Snapshot all value types here (MainActor) before entering the
+        // @Sendable Canvas closure.
+        let region       = mapRegion.region
+        let viewMode     = appState.viewMode
+        let smoothCoords = appState.currentDaySmoothedCoords
+        let multiCoords  = appState.multiDayCoords
+        let multiSums    = appState.multiDaySummaries
+        let hdr          = appState.hdrEnabled
+
+        Canvas { ctx, size in
+            guard let region,
+                  region.span.longitudeDelta > 0,
+                  size.width > 0 else { return }
+
+            // Web Mercator projection matching MapKit's tile coordinate system.
+            let scale = size.width / region.span.longitudeDelta
+            let cLat  = region.center.latitude
+            let cLon  = region.center.longitude
+            let mYc   = log(tan(.pi / 4 + cLat * .pi / 360))
+
+            func geo(_ c: CLLocationCoordinate2D) -> CGPoint {
+                let dx =  (c.longitude - cLon) * scale
+                let dy = -(log(tan(.pi / 4 + c.latitude * .pi / 360)) - mYc) * scale * (180 / .pi)
+                return CGPoint(x: size.width / 2 + dx, y: size.height / 2 + dy)
+            }
+
+            // withCGContext writes raw CGColors into the Canvas's wide-gamut
+            // backing buffer, preserving EDR components > 1.0 for HDR mode.
+            ctx.withCGContext { cgCtx in
+                cgCtx.setLineWidth(3)
+                cgCtx.setLineCap(.round)
+                cgCtx.setLineJoin(.round)
+
+                switch viewMode {
+                case .singleDay, .singleDayFromMulti:
+                    let n = smoothCoords.count
+                    guard n >= 2 else { return }
+                    // Band-based gradient: divide track into N colour bands.
+                    // Reduces draw calls from O(n) to O(gradientBandCount).
+                    let bands = HDRConfig.gradientBandCount
+                    for band in 0 ..< bands {
+                        let i0 = (n - 1) * band / bands
+                        let i1 = min((n - 1) * (band + 1) / bands, n - 2)
+                        guard i0 <= i1 else { continue }
+                        let progress = Double(i0) / Double(n - 1)
+                        let color = hdr
+                            ? ColorUtils.rainbowPastelCGColorHDR(progress: progress)
+                            : ColorUtils.rainbowPastelCGColor(progress: progress)
+                        cgCtx.setStrokeColor(color)
+                        cgCtx.beginPath()
+                        cgCtx.move(to: geo(smoothCoords[i0]))
+                        for i in (i0 + 1) ... (i1 + 1) {
+                            cgCtx.addLine(to: geo(smoothCoords[i]))
+                        }
+                        cgCtx.strokePath()
+                    }
+
+                case .multiDay:
+                    let total = multiSums.count
+                    for (idx, summary) in multiSums.enumerated() {
+                        guard let coords = multiCoords[summary.date],
+                              coords.count >= 2 else { continue }
+                        let color = hdr
+                            ? ColorUtils.discreteRainbowCGColorHDR(index: idx, total: total)
+                            : ColorUtils.discreteRainbowCGColor(index: idx, total: total)
+                        cgCtx.setStrokeColor(color)
+                        cgCtx.beginPath()
+                        cgCtx.move(to: geo(coords[0]))
+                        for i in 1 ..< coords.count { cgCtx.addLine(to: geo(coords[i])) }
+                        cgCtx.strokePath()
+                    }
+                }
             }
         }
     }

@@ -41,7 +41,10 @@ enum ColorUtils {
     /// `progress` ∈ [0, 1]: 0 = start of day (red), 1 = end of day (purple).
     static func rainbowPastelNSColor(progress: Double) -> NSColor {
         let hue = max(0, min(1, progress)) * 0.75   // 0 (red) → 0.75 (purple)
-        return NSColor(calibratedHue: hue, saturation: 0.55, brightness: 0.92, alpha: 1)
+        return NSColor(calibratedHue: hue,
+                       saturation: HDRConfig.trackSDRSaturation,
+                       brightness: HDRConfig.trackSDRBrightness,
+                       alpha: 1)
     }
 
     static func rainbowPastelCGColor(progress: Double) -> CGColor {
@@ -54,10 +57,54 @@ enum ColorUtils {
     static func discreteRainbowNSColor(index: Int, total: Int) -> NSColor {
         guard total > 0 else { return .systemRed }
         let t = total == 1 ? 0.0 : Double(index) / Double(total - 1)
-        return NSColor(calibratedHue: t * 0.75, saturation: 0.65, brightness: 0.85, alpha: 1)
+        return NSColor(calibratedHue: t * 0.75,
+                       saturation: HDRConfig.trackSDRSaturation,
+                       brightness: HDRConfig.trackSDRBrightness,
+                       alpha: 1)
     }
 
     static func discreteRainbowCGColor(index: Int, total: Int) -> CGColor {
         discreteRainbowNSColor(index: index, total: total).cgColor
+    }
+
+    // MARK: - EDR / HDR variants
+    // Colors in CGColorSpace.extendedLinearSRGB with component values > 1.0 render
+    // brighter than SDR white on an EDR (Extended Dynamic Range) display.
+
+    /// Converts a calibrated HSB colour to linear light, multiplies by `HDRConfig.trackEDRMultiplier`,
+    /// and places the result in the extendedLinearSRGB colour space for EDR rendering.
+    private static func edrColor(hue: Double, saturation: CGFloat, brightness: CGFloat) -> CGColor {
+        let ns = NSColor(calibratedHue: hue, saturation: saturation, brightness: brightness, alpha: 1)
+        // Convert to generic RGB so getRed works reliably
+        guard let rgb = ns.usingColorSpace(.genericRGB) else { return ns.cgColor }
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0
+        rgb.getRed(&r, green: &g, blue: &b, alpha: nil)
+
+        // sRGB → linear light (remove gamma)
+        func toLinear(_ c: CGFloat) -> CGFloat {
+            c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+        }
+        let m = HDRConfig.trackEDRMultiplier
+        let comps: [CGFloat] = [toLinear(r) * m, toLinear(g) * m, toLinear(b) * m, 1.0]
+
+        guard let space = CGColorSpace(name: CGColorSpace.extendedLinearSRGB) else { return ns.cgColor }
+        return CGColor(colorSpace: space, components: comps) ?? ns.cgColor
+    }
+
+    /// HDR single-day gradient colour. `progress` ∈ [0, 1].
+    static func rainbowPastelCGColorHDR(progress: Double) -> CGColor {
+        let hue = max(0, min(1, progress)) * 0.75
+        return edrColor(hue: hue,
+                        saturation: HDRConfig.trackHDRSaturation,
+                        brightness: HDRConfig.trackHDRBrightness)
+    }
+
+    /// HDR multi-day colour. `index` ∈ [0, total-1].
+    static func discreteRainbowCGColorHDR(index: Int, total: Int) -> CGColor {
+        guard total > 0 else { return CGColor(red: 1, green: 0, blue: 0, alpha: 1) }
+        let hue = total == 1 ? 0.0 : Double(index) / Double(total - 1) * 0.75
+        return edrColor(hue: hue,
+                        saturation: HDRConfig.trackHDRSaturation,
+                        brightness: HDRConfig.trackHDRBrightness)
     }
 }

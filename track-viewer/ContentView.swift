@@ -74,6 +74,18 @@ struct ToolbarView: View {
             .buttonStyle(.bordered)
             .controlSize(.regular)
 
+            // HDR toggle
+            Toggle(isOn: $appState.hdrEnabled) {
+                Label("HDR", systemImage: "sparkles")
+                    .labelStyle(.titleAndIcon)
+            }
+            .toggleStyle(.button)
+            .buttonStyle(.bordered)
+            .controlSize(.regular)
+            .help(appState.hdrEnabled
+                  ? "HDR 开启：轨迹线以 EDR 超亮色渲染"
+                  : "HDR 关闭：地图降低亮度与饱和度")
+
             Spacer()
 
             // Return-to-multi button (only in singleDayFromMulti mode)

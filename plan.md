@@ -36,3 +36,20 @@
 对于多日模式，用彩虹色，红橙黄绿蓝靛紫，离散地为每一天指定一种颜色。红色代表第一天，紫色代表最后一天。每一天不展示任何的轨迹点，而是一段平滑的轨迹。鼠标移动到轨迹上的时候，展示日期和这天的总距离。点击这天的轨迹，可以暂时切换到一日模式，展示这天的轨迹。但是在“一日/多日”切换按钮的左侧增加一个按钮，返回刚刚的多日模式。
 
 程序启动的时候默认加载上次的轨迹文件，上次的日期设置。
+
+===
+
+关于 MKOverlayRenderer 无法实现 HDR 的 workaround：
+
+MKOverlayRenderer.draw(_:zoomScale:in:) 收到的 CGContext 是 MapKit 内部创建的标准 8-bit sRGB 缓冲区。不管 CGColor 的色彩空间是 extendedLinearSRGB，写入这个 context 时值会被直接 clamp 到 [0, 1]，EDR 分量在到达显示器之前就已经被截断了。wantsExtendedDynamicRangeContent 控制的是 CALayer 合成阶段，管不到 overlay 光栅化阶段。
+
+修复方案：SwiftUI Canvas + .allowedDynamicRange(.high)
+
+这是 macOS 14+ 唯一保证 EDR 有效的 Core Graphics 路径：
+
+AppState.swift: 新增 currentDaySmoothedCoords（缓存平滑坐标）和 currentMapRegion（实时地图区域）
+TrackMapView.swift:
+新增 mapViewRegionIsChanging + regionDidChangeAnimated 代理方法，在每次平移/缩放时实时更新 currentMapRegion
+HDR 开启时 updateMap 跳过添加 MKOverlay（避免重复绘制）
+MapContainer 内叠加 HDRTrackCanvas
+新增 HDRTrackCanvas 结构体：使用正确的 Web Mercator 投影公式（与 MapKit 内部完全一致）将经纬度转换为 Canvas 像素坐标，逐段绘制 EDR 颜色

@@ -25,6 +25,8 @@ final class AppState {
 
     var selectedDate: String?           // YYYY-MM-DD
     var currentDayPoints: [TrackPoint] = []
+    /// Pre-smoothed coordinates for Canvas-based HDR rendering.
+    var currentDaySmoothedCoords: [CLLocationCoordinate2D] = []
 
     // MARK: - Multi-Day
 
@@ -49,6 +51,9 @@ final class AppState {
     var showFullCalendar       = false
     var showDateRangePicker    = false
     var mapFitRequested        = false
+    var hdrEnabled: Bool = UserDefaults.standard.bool(forKey: "tv.hdrEnabled") {
+        didSet { UserDefaults.standard.set(hdrEnabled, forKey: "tv.hdrEnabled") }
+    }
 
     // MARK: - Database
 
@@ -207,6 +212,12 @@ final class AppState {
 
         let raw = await db.getTrackPoints(fileMD5: md5, date: date)
         currentDayPoints = raw
+
+        // Pre-compute smoothed coords for Canvas-based HDR rendering
+        let allCoords = raw.map(\.wgs84Coordinate)
+        let down = CurveUtils.downsample(allCoords, maxPoints: 600)
+        currentDaySmoothedCoords = CurveUtils.catmullRomSpline(coordinates: down, pointsPerSegment: 6)
+
         mapFitRequested = true
 
         // Persist for next launch
