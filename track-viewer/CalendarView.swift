@@ -45,7 +45,7 @@ struct CalendarDayCell: View {
                     )
 
                 if dateStr != nil {
-                    VStack(spacing: 2) {
+                    VStack(spacing: 0) {
                         Text(weekdayLabel)
                             .font(.system(size: 8, weight: .regular))
                             .foregroundStyle(.secondary)
@@ -58,7 +58,7 @@ struct CalendarDayCell: View {
             .frame(width: 30, height: 30)
         }
         .buttonStyle(.plain)
-        .disabled(dateStr == nil)
+        .disabled(dateStr == nil || summary == nil)
     }
 }
 
@@ -67,8 +67,31 @@ struct CalendarDayCell: View {
 struct MiniCalendarView: View {
     @Bindable var appState: AppState
 
+    private var yearMonthLabel: (year: String, month: String) {
+        guard let sel = appState.selectedDate else { return ("", "") }
+        let parts = sel.split(separator: "-")
+        let year = parts.count > 0 ? String(parts[0]) : ""
+        let month = parts.count > 1 ? "\(Int(parts[1]) ?? 0)月" : ""
+        return (year, month)
+    }
+
     var body: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 4) {
+            // Year / Month label
+            let label = yearMonthLabel
+            VStack(spacing: 0) {
+                Text(label.year)
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(.secondary)
+                Text(label.month)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.primary)
+            }
+            .frame(width: 40, height: 30)
+            .padding(.trailing, 2)
+            
+            Spacer(minLength: 6)
+
             ForEach(0 ..< 13, id: \.self) { idx in
                 let dateStr = appState.miniCalendarDates[idx]
                 CalendarDayCell(

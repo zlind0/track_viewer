@@ -279,32 +279,15 @@ final class AppState {
         dailySummaries.map(\.date).sorted()
     }
 
-    /// 13-day window around `selectedDate` (6 before, current, 6 after), only data days.
+    /// 13-day window around `selectedDate` (6 before, current, 6 after), all calendar days.
     var miniCalendarDates: [String?] {
-        guard let sel = selectedDate else { return Array(repeating: nil, count: 13) }
-        let sorted = sortedDates
-        guard let idx = sorted.firstIndex(of: sel) else { return Array(repeating: nil, count: 13) }
-
-        var result: [String?] = Array(repeating: nil, count: 13)
-        result[6] = sel
-
-        // Fill left (6 data-days before)
-        var leftIdx = idx - 1
-        for slot in stride(from: 5, through: 0, by: -1) {
-            if leftIdx >= 0 {
-                result[slot] = sorted[leftIdx]
-                leftIdx -= 1
-            }
+        guard let sel = selectedDate,
+              let selDate = DateFormatter.utcDate.date(from: sel) else {
+            return Array(repeating: nil, count: 13)
         }
-
-        // Fill right (6 data-days after)
-        var rightIdx = idx + 1
-        for slot in 7...12 {
-            if rightIdx < sorted.count {
-                result[slot] = sorted[rightIdx]
-                rightIdx += 1
-            }
+        return (-6...6).map { offset in
+            Calendar.utc.date(byAdding: .day, value: offset, to: selDate)
+                .map { DateFormatter.utcDate.string(from: $0) }
         }
-        return result
     }
 }
