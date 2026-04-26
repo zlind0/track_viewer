@@ -36,7 +36,7 @@ struct CalendarDayCell: View {
 
     var body: some View {
         Button(action: onTap) {
-            ZStack(alignment: .topLeading) {
+            ZStack {
                 RoundedRectangle(cornerRadius: 5)
                     .fill(bgColor)
                     .overlay(
@@ -45,34 +45,17 @@ struct CalendarDayCell: View {
                     )
 
                 if dateStr != nil {
-                    VStack(alignment: .leading, spacing: 0) {
+                    VStack(spacing: 2) {
                         Text(weekdayLabel)
                             .font(.system(size: 8, weight: .regular))
                             .foregroundStyle(.secondary)
-                            .padding(.top, 3)
-                            .padding(.leading, 3)
-                        Spacer()
-                    }
-
-                    VStack(alignment: .trailing, spacing: 0) {
-                        Spacer()
-                        HStack(alignment: .bottom, spacing: 0) {
-                            Text(monthLabel)
-                                .font(.system(size: 7))
-                                .foregroundStyle(.secondary)
-                                .padding(.leading, 3)
-                                .padding(.bottom, 3)
-                            Spacer()
-                            Text(dayNumber)
-                                .font(.system(size: 14, weight: summary != nil ? .semibold : .light))
-                                .foregroundStyle(summary != nil ? .primary : .tertiary)
-                                .padding(.trailing, 3)
-                                .padding(.bottom, 2)
-                        }
+                        Text(dayNumber)
+                            .font(.system(size: 14, weight: summary != nil ? .semibold : .light))
+                            .foregroundStyle(summary != nil ? .primary : .tertiary)
                     }
                 }
             }
-            .frame(width: 44, height: 44)
+            .frame(width: 30, height: 30)
         }
         .buttonStyle(.plain)
         .disabled(dateStr == nil)
@@ -106,7 +89,7 @@ struct MiniCalendarView: View {
             } label: {
                 Image(systemName: appState.showFullCalendar ? "chevron.up" : "chevron.down")
                     .font(.system(size: 11, weight: .semibold))
-                    .frame(width: 22, height: 44)
+                    .frame(width: 22, height: 30)
                     .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 5))
             }
             .buttonStyle(.plain)

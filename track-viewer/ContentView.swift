@@ -7,41 +7,94 @@ struct ContentView: View {
     @State private var showOpen  = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            // ── Toolbar ──────────────────────────────────────────────
-            ToolbarView(appState: appState, showOpen: $showOpen)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(.regularMaterial)
+        ZStack {
+            MapContainer(appState: appState)
 
-            Divider()
+            // Loading overlay
+            if appState.isLoading {
+                LoadingOverlayView(
+                    progress: appState.loadingProgress,
+                    message:  appState.loadingMessage
+                )
+            }
 
-            // ── Map ──────────────────────────────────────────────────
-            ZStack {
-                MapContainer(appState: appState)
-
-                // Loading overlay
-                if appState.isLoading {
-                    LoadingOverlayView(
-                        progress: appState.loadingProgress,
-                        message:  appState.loadingMessage
-                    )
-                }
-
-                // Error banner
-                if let err = appState.loadError {
-                    VStack {
-                        ErrorBannerView(message: err) {
-                            appState.loadError = nil
-                        }
-                        Spacer()
+            // Error banner
+            if let err = appState.loadError {
+                VStack {
+                    ErrorBannerView(message: err) {
+                        appState.loadError = nil
                     }
-                    .padding(12)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    Spacer()
                 }
+                .padding(12)
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
         .frame(minWidth: 1100, minHeight: 680)
+        .toolbar {
+            // ── 左：打开 ──────────────────────────────────────────
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    showOpen = true
+                } label: {
+                    Label("打开", systemImage: "folder")
+                }
+            }
+
+            // ── 左：返回多日（条件显示）────────────────────────────
+            if appState.viewMode == .singleDayFromMulti {
+                ToolbarItem(placement: .navigation) {
+                    Button {
+                        Task { await appState.returnToMultiDay() }
+                    } label: {
+                        Label("返回多日", systemImage: "arrow.backward")
+                    }
+                }
+            }
+
+            // ── 中：日历 / 日期范围 ───────────────────────────────
+            if appState.currentFileMD5 != nil {
+                ToolbarItem(placement: .principal) {
+                    if appState.viewMode == .multiDay {
+                        MultiDayRangeSelector(appState: appState)
+                    } else {
+                        MiniCalendarView(appState: appState)
+                    }
+                }
+            }
+
+            // ── 右：一日 / 多日 切换 ──────────────────────────────
+            if appState.currentFileMD5 != nil {
+                ToolbarItem(placement: .primaryAction) {
+                    Picker("", selection: Binding(
+                        get: {
+                            appState.viewMode == .multiDay ? 1 : 0
+                        },
+                        set: { val in
+                            if val == 1 {
+                                let dates = appState.sortedDates
+                                if let last  = dates.last.flatMap({ DateFormatter.utcDate.date(from: $0) }),
+                                   let first = dates.first.flatMap({ DateFormatter.utcDate.date(from: $0) }) {
+                                    let start = Calendar.utc.date(byAdding: .day, value: -6, to: last) ?? first
+                                    Task { await appState.loadMultiDay(start: start, end: last) }
+                                }
+                            } else {
+                                Task {
+                                    if let sel = appState.selectedDate {
+                                        await appState.selectDate(sel)
+                                    }
+                                }
+                            }
+                        }
+                    )) {
+                        Text("一日").tag(0)
+                        Text("多日").tag(1)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 100)
+                }
+            }
+        }
         .fileImporter(
             isPresented: $showOpen,
             allowedContentTypes: [.commaSeparatedText,
@@ -52,85 +105,6 @@ struct ContentView: View {
                 }
             }
         )
-    }
-}
-
-// MARK: - ToolbarView
-
-struct ToolbarView: View {
-    @Bindable var appState: AppState
-    @Binding var showOpen: Bool
-
-    var body: some View {
-        HStack(spacing: 12) {
-
-            // 打开 button
-            Button {
-                showOpen = true
-            } label: {
-                Label("打开", systemImage: "folder")
-                    .labelStyle(.titleAndIcon)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.regular)
-
-            Spacer()
-
-            // Return-to-multi button (only in singleDayFromMulti mode)
-            if appState.viewMode == .singleDayFromMulti {
-                Button {
-                    Task { await appState.returnToMultiDay() }
-                } label: {
-                    Label("返回多日", systemImage: "arrow.backward")
-                        .labelStyle(.titleAndIcon)
-                }
-                .buttonStyle(.bordered)
-                .transition(.scale.combined(with: .opacity))
-            }
-
-            // Calendar area
-            if appState.currentFileMD5 != nil {
-                Group {
-                    if appState.viewMode == .multiDay {
-                        MultiDayRangeSelector(appState: appState)
-                    } else {
-                        MiniCalendarView(appState: appState)
-                    }
-                }
-            }
-
-            // Mode toggle
-            if appState.currentFileMD5 != nil {
-                Picker("", selection: Binding(
-                    get: {
-                        appState.viewMode == .multiDay ? 1 : 0
-                    },
-                    set: { val in
-                        if val == 1 {
-                            // Enter multi-day: default to last 7 days with data
-                            let dates = appState.sortedDates
-                            if let last = dates.last.flatMap({ DateFormatter.utcDate.date(from: $0) }),
-                               let first = dates.first.flatMap({ DateFormatter.utcDate.date(from: $0) }) {
-                                let start = Calendar.utc.date(
-                                    byAdding: .day, value: -6, to: last) ?? first
-                                Task { await appState.loadMultiDay(start: start, end: last) }
-                            }
-                        } else {
-                            Task {
-                                if let sel = appState.selectedDate {
-                                    await appState.selectDate(sel)
-                                }
-                            }
-                        }
-                    }
-                )) {
-                    Text("一日").tag(0)
-                    Text("多日").tag(1)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 100)
-            }
-        }
     }
 }
 
