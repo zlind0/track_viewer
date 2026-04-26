@@ -41,9 +41,11 @@ enum ColorUtils {
     /// `progress` ∈ [0, 1]: 0 = start of day (red), 1 = end of day (purple).
     static func rainbowPastelNSColor(progress: Double) -> NSColor {
         let hue = max(0, min(1, progress)) * 0.75   // 0 (red) → 0.75 (purple)
+        let boost = perceptualBoost(hue: hue, maxBoost: 1.0 / Double(HDRConfig.trackSDRBrightness))
+        let adjustedBrightness = min(1.0, HDRConfig.trackSDRBrightness * boost)
         return NSColor(calibratedHue: hue,
                        saturation: HDRConfig.trackSDRSaturation,
-                       brightness: HDRConfig.trackSDRBrightness,
+                       brightness: adjustedBrightness,
                        alpha: 1)
     }
 
@@ -56,10 +58,12 @@ enum ColorUtils {
     /// `index` ∈ [0, total-1]: 0 = red (first day), total-1 = purple (last day).
     static func discreteRainbowNSColor(index: Int, total: Int) -> NSColor {
         guard total > 0 else { return .systemRed }
-        let t = total == 1 ? 0.0 : Double(index) / Double(total - 1)
-        return NSColor(calibratedHue: t * 0.75,
+        let hue = (total == 1 ? 0.0 : Double(index) / Double(total - 1)) * 0.75
+        let boost = perceptualBoost(hue: hue, maxBoost: 1.0 / Double(HDRConfig.trackSDRBrightness))
+        let adjustedBrightness = min(1.0, HDRConfig.trackSDRBrightness * boost)
+        return NSColor(calibratedHue: hue,
                        saturation: HDRConfig.trackSDRSaturation,
-                       brightness: HDRConfig.trackSDRBrightness,
+                       brightness: adjustedBrightness,
                        alpha: 1)
     }
 
@@ -71,11 +75,39 @@ enum ColorUtils {
     // Colors in CGColorSpace.extendedLinearSRGB with component values > 1.0 render
     // brighter than SDR white on an EDR (Extended Dynamic Range) display.
 
+    // MARK: Perceptual luminance compensation
+
+    /// Approximate relative luminance of a fully-saturated HSB colour at `hue` ∈ [0, 1].
+    /// Uses the standard Rec.709 coefficients (0.2126 R + 0.7152 G + 0.0722 B).
+    private static func relativeLuminance(hue: Double) -> Double {
+        let h6 = (hue * 6.0).truncatingRemainder(dividingBy: 6.0)
+        let i  = Int(h6), f = h6 - Double(i)
+        let r, g, b: Double
+        switch i {
+        case 0:  r = 1;   g = f;   b = 0
+        case 1:  r = 1-f; g = 1;   b = 0
+        case 2:  r = 0;   g = 1;   b = f
+        case 3:  r = 0;   g = 1-f; b = 1
+        case 4:  r = f;   g = 0;   b = 1
+        default: r = 1;   g = 0;   b = 1-f
+        }
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+    }
+
+    /// Brightness multiplier that perceptually equalises the rainbow.
+    /// Dark hues (blue, violet) get boosted; bright hues (yellow, cyan) stay at 1.0.
+    private static func perceptualBoost(hue: Double, maxBoost: Double) -> CGFloat {
+        let lum = relativeLuminance(hue: hue)
+        let target = HDRConfig.perceptualTargetLuminance
+        return CGFloat(min(maxBoost, max(1.0, target / max(lum, 0.01))))
+    }
+
     /// Converts a calibrated HSB colour to linear light, multiplies by `HDRConfig.trackEDRMultiplier`,
     /// and places the result in the extendedLinearSRGB colour space for EDR rendering.
+    /// A per-hue perceptual boost is also applied so dark hues (red, blue) match
+    /// the perceived brightness of bright hues (yellow, cyan).
     private static func edrColor(hue: Double, saturation: CGFloat, brightness: CGFloat) -> CGColor {
         let ns = NSColor(calibratedHue: hue, saturation: saturation, brightness: brightness, alpha: 1)
-        // Convert to generic RGB so getRed works reliably
         guard let rgb = ns.usingColorSpace(.genericRGB) else { return ns.cgColor }
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0
         rgb.getRed(&r, green: &g, blue: &b, alpha: nil)
@@ -84,7 +116,9 @@ enum ColorUtils {
         func toLinear(_ c: CGFloat) -> CGFloat {
             c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
         }
-        let m = HDRConfig.trackEDRMultiplier
+        // Per-hue perceptual boost so blue/violet match orange/yellow in perceived brightness.
+        let boost = perceptualBoost(hue: hue, maxBoost: HDRConfig.perceptualMaxBoostHDR)
+        let m = HDRConfig.trackEDRMultiplier * boost
         let comps: [CGFloat] = [toLinear(r) * m, toLinear(g) * m, toLinear(b) * m, 1.0]
 
         guard let space = CGColorSpace(name: CGColorSpace.extendedLinearSRGB) else { return ns.cgColor }
