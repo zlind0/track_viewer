@@ -54,6 +54,16 @@ final class AppState {
 
     private(set) var database: DatabaseManager?
 
+    // MARK: - UserDefaults Keys
+
+    private enum PrefKey {
+        static let lastFileMD5       = "tv.lastFileMD5"
+        static let lastSelectedDate  = "tv.lastSelectedDate"
+        static let lastViewMode      = "tv.lastViewMode"      // "singleDay" | "multiDay"
+        static let lastMultiDayStart = "tv.lastMultiDayStart" // TimeInterval
+        static let lastMultiDayEnd   = "tv.lastMultiDayEnd"   // TimeInterval
+    }
+
     // MARK: - Init
 
     init() {
@@ -63,8 +73,42 @@ final class AppState {
     private func initDatabase() async {
         do {
             database = try await Task.detached { try DatabaseManager() }.value
+            await restoreLastSession()
         } catch {
             loadError = error.localizedDescription
+        }
+    }
+
+    // MARK: - Session Restore
+
+    private func restoreLastSession() async {
+        let ud = UserDefaults.standard
+        guard let md5 = ud.string(forKey: PrefKey.lastFileMD5),
+              let db  = database else { return }
+
+        // Verify the file is still in the DB cache
+        let cached = await db.fileCacheExists(md5: md5)
+        guard cached else {
+            ud.removeObject(forKey: PrefKey.lastFileMD5)
+            return
+        }
+
+        currentFileMD5 = md5
+        let summaries = await db.getDailySummaries(fileMD5: md5)
+        dailySummaries = summaries
+        summaryByDate  = Dictionary(uniqueKeysWithValues: summaries.map { ($0.date, $0) })
+
+        let modeName = ud.string(forKey: PrefKey.lastViewMode) ?? "singleDay"
+        if modeName == "multiDay",
+           let startTS = ud.object(forKey: PrefKey.lastMultiDayStart) as? Double,
+           let endTS   = ud.object(forKey: PrefKey.lastMultiDayEnd) as? Double {
+            await loadMultiDay(start: Date(timeIntervalSince1970: startTS),
+                               end:   Date(timeIntervalSince1970: endTS))
+        } else if let date = ud.string(forKey: PrefKey.lastSelectedDate),
+                  summaryByDate[date] != nil {
+            await selectDate(date)
+        } else if let latest = summaries.first {
+            await selectDate(latest.date)
         }
     }
 
@@ -164,6 +208,12 @@ final class AppState {
         let raw = await db.getTrackPoints(fileMD5: md5, date: date)
         currentDayPoints = raw
         mapFitRequested = true
+
+        // Persist for next launch
+        let ud = UserDefaults.standard
+        ud.set(md5, forKey: PrefKey.lastFileMD5)
+        ud.set(date, forKey: PrefKey.lastSelectedDate)
+        ud.set("singleDay", forKey: PrefKey.lastViewMode)
     }
 
     // MARK: - Multi-Day Load
@@ -195,6 +245,15 @@ final class AppState {
         multiDaySummaries = dateStrings.compactMap { summaryByDate[$0] }
         viewMode = .multiDay
         mapFitRequested  = true
+
+        // Persist for next launch
+        if let md5 = currentFileMD5 {
+            let ud = UserDefaults.standard
+            ud.set(md5, forKey: PrefKey.lastFileMD5)
+            ud.set(start.timeIntervalSince1970, forKey: PrefKey.lastMultiDayStart)
+            ud.set(end.timeIntervalSince1970, forKey: PrefKey.lastMultiDayEnd)
+            ud.set("multiDay", forKey: PrefKey.lastViewMode)
+        }
     }
 
     // MARK: - Single Day from Multi (drill-down)
