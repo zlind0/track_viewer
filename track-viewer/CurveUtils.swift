@@ -53,7 +53,7 @@ enum CurveUtils {
 
             for j in 0 ..< pointsPerSegment {
                 let t = Double(j) / Double(pointsPerSegment)
-                result.append(crPoint(p0: p0, p1: p1, p2: p2, p3: p3, t: t))
+                result.append(crPointCentripetal(p0: p0, p1: p1, p2: p2, p3: p3, t: t))
             }
         }
         result.append(coordinates[coordinates.count - 1])
@@ -118,25 +118,51 @@ enum CurveUtils {
 
     // MARK: Private
 
-    private static func crPoint(
+    /// Centripetal Catmull-Rom via the Barry-Goldman algorithm.
+    ///
+    /// Knot spacing = distance^0.5  (alpha = 0.5).  This parameterisation
+    /// guarantees no cusps or self-intersections, and — crucially — when the
+    /// p0→p1 segment is very long (GPS break), its influence on the tangent
+    /// at p1 shrinks to zero automatically, eliminating false spikes.
+    private static func crPointCentripetal(
         p0: CLLocationCoordinate2D, p1: CLLocationCoordinate2D,
         p2: CLLocationCoordinate2D, p3: CLLocationCoordinate2D,
-        t: Double
+        t: Double   // 0…1 over the p1→p2 segment
     ) -> CLLocationCoordinate2D {
-        let t2 = t * t, t3 = t2 * t
-        let lat = 0.5 * (
-            2 * p1.latitude
-            + (-p0.latitude + p2.latitude) * t
-            + (2 * p0.latitude - 5 * p1.latitude + 4 * p2.latitude - p3.latitude) * t2
-            + (-p0.latitude + 3 * p1.latitude - 3 * p2.latitude + p3.latitude) * t3
+        let d01 = max(1e-4, pow(haversineMeters(p0, p1), 0.5))
+        let d12 = max(1e-4, pow(haversineMeters(p1, p2), 0.5))
+        let d23 = max(1e-4, pow(haversineMeters(p2, p3), 0.5))
+
+        let t0 = 0.0
+        let t1 = d01
+        let t2 = t1 + d12
+        let t3 = t2 + d23
+        let tc = t1 + t * d12   // actual parameter in [t1, t2]
+
+        // Linear blend helper (avoids division by zero via the max above).
+        func blend(_ va: Double, _ vb: Double, _ ta: Double, _ tb: Double) -> Double {
+            (va * (tb - tc) + vb * (tc - ta)) / (tb - ta)
+        }
+
+        // Level 1
+        let a1lat = blend(p0.latitude,  p1.latitude,  t0, t1)
+        let a1lon = blend(p0.longitude, p1.longitude, t0, t1)
+        let a2lat = blend(p1.latitude,  p2.latitude,  t1, t2)
+        let a2lon = blend(p1.longitude, p2.longitude, t1, t2)
+        let a3lat = blend(p2.latitude,  p3.latitude,  t2, t3)
+        let a3lon = blend(p2.longitude, p3.longitude, t2, t3)
+
+        // Level 2
+        let b1lat = blend(a1lat, a2lat, t0, t2)
+        let b1lon = blend(a1lon, a2lon, t0, t2)
+        let b2lat = blend(a2lat, a3lat, t1, t3)
+        let b2lon = blend(a2lon, a3lon, t1, t3)
+
+        // Level 3
+        return CLLocationCoordinate2D(
+            latitude:  blend(b1lat, b2lat, t1, t2),
+            longitude: blend(b1lon, b2lon, t1, t2)
         )
-        let lon = 0.5 * (
-            2 * p1.longitude
-            + (-p0.longitude + p2.longitude) * t
-            + (2 * p0.longitude - 5 * p1.longitude + 4 * p2.longitude - p3.longitude) * t2
-            + (-p0.longitude + 3 * p1.longitude - 3 * p2.longitude + p3.longitude) * t3
-        )
-        return CLLocationCoordinate2D(latitude: lat, longitude: lon)
     }
 
     private static func linspace(
