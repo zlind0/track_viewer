@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		3E126DC32F9DF58100FB3503 /* plan.md in Resources */ = {isa = PBXBuildFile; fileRef = 3E126DC22F9DF57E00FB3503 /* plan.md */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		3E126DA42F9DF18200FB3503 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -27,6 +31,7 @@
 		3E126D952F9DF18100FB3503 /* track-viewer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "track-viewer.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		3E126DA32F9DF18200FB3503 /* track-viewerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "track-viewerTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		3E126DAD2F9DF18200FB3503 /* track-viewerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "track-viewerUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		3E126DC22F9DF57E00FB3503 /* plan.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = plan.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -75,6 +80,7 @@
 		3E126D8C2F9DF18100FB3503 = {
 			isa = PBXGroup;
 			children = (
+				3E126DC22F9DF57E00FB3503 /* plan.md */,
 				3E126D972F9DF18100FB3503 /* track-viewer */,
 				3E126DA62F9DF18200FB3503 /* track-viewerTests */,
 				3E126DB02F9DF18200FB3503 /* track-viewerUITests */,
@@ -212,6 +218,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3E126DC32F9DF58100FB3503 /* plan.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
