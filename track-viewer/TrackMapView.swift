@@ -365,12 +365,7 @@ struct TrackMapView: NSViewRepresentable {
                 return GradientPolylineRenderer(overlay: grad)
             }
             if let poly = overlay as? ColoredPolyline {
-                let renderer    = MKPolylineRenderer(polyline: poly)
-                renderer.strokeColor = NSColor(cgColor: poly.lineColor)
-                renderer.lineWidth   = 3
-                renderer.lineCap     = .round
-                renderer.lineJoin    = .round
-                return renderer
+                return ColoredPolylineRenderer(polyline: poly)
             }
             return MKOverlayRenderer(overlay: overlay)
         }

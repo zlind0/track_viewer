@@ -47,18 +47,35 @@ final class GradientPolylineRenderer: MKOverlayRenderer {
         let colors = gradientOverlay.colors
         guard coords.count >= 2 else { return }
 
-        let lineWidth = max(2.0, 4.0 / zoomScale)
-        ctx.setLineWidth(lineWidth)
+        let lineWidth:   CGFloat = max(3.0, 6.0 / zoomScale)
+        let borderWidth: CGFloat = lineWidth + max(3.0, 6.0 / zoomScale)
+        let shadowBlur:  CGFloat = max(5.0, 10.0 / zoomScale)
         ctx.setLineCap(.round)
         ctx.setLineJoin(.round)
 
         let count = min(coords.count, colors.count)
+        let pts: [CGPoint] = coords.prefix(count).map { point(for: MKMapPoint($0)) }
+
+        // Pass 1: ONE continuous path → white border + shadow drawn exactly once.
+        // Never draw shadow per-segment; accumulated shadows look dirty.
+        ctx.saveGState()
+        ctx.setShadow(offset: CGSize(width: 0, height: -1.0 / zoomScale),
+                      blur: shadowBlur,
+                      color: CGColor(gray: 0, alpha: 0.3))
+        ctx.setLineWidth(borderWidth)
+        ctx.setStrokeColor(CGColor(gray: 1.0, alpha: 1.0))
+        ctx.beginPath()
+        ctx.move(to: pts[0])
+        for i in 1 ..< pts.count { ctx.addLine(to: pts[i]) }
+        ctx.strokePath()
+        ctx.restoreGState()
+
+        // Pass 2: per-segment rainbow gradient on top, no shadow.
+        ctx.setLineWidth(lineWidth)
         for i in 0 ..< count - 1 {
-            let p1 = point(for: MKMapPoint(coords[i]))
-            let p2 = point(for: MKMapPoint(coords[i + 1]))
             ctx.beginPath()
-            ctx.move(to: p1)
-            ctx.addLine(to: p2)
+            ctx.move(to: pts[i])
+            ctx.addLine(to: pts[i + 1])
             ctx.setStrokeColor(colors[i])
             ctx.strokePath()
         }
@@ -75,4 +92,51 @@ final class ColoredPolyline: MKPolyline {
     var dayDate:   String  = ""
     var dayIndex:  Int     = 0
     var totalDays: Int     = 1
+}
+
+// MARK: - ColoredPolylineRenderer
+// Draws the day polyline with a white border and soft shadow.
+
+final class ColoredPolylineRenderer: MKOverlayRenderer {
+    private let poly: ColoredPolyline
+
+    init(polyline: ColoredPolyline) {
+        self.poly = polyline
+        super.init(overlay: polyline)
+    }
+
+    override func draw(_ mapRect: MKMapRect, zoomScale: MKZoomScale, in ctx: CGContext) {
+        guard poly.pointCount >= 2 else { return }
+
+        let lineWidth:   CGFloat = max(3.0, 6.0  / zoomScale)
+        let borderWidth: CGFloat = lineWidth + max(3.0, 6.0 / zoomScale)
+        let shadowBlur:  CGFloat = max(5.0, 10.0 / zoomScale)
+        ctx.setLineCap(.round)
+        ctx.setLineJoin(.round)
+
+        let pts: [CGPoint] = (0 ..< poly.pointCount).map { point(for: poly.points()[$0]) }
+
+        // Pass 1: ONE continuous path → white border + shadow drawn exactly once.
+        ctx.saveGState()
+        ctx.setShadow(offset: CGSize(width: 0, height: -1.0 / zoomScale),
+                      blur: shadowBlur,
+                      color: CGColor(gray: 0, alpha: 0.18))
+        ctx.setLineWidth(borderWidth)
+        ctx.setStrokeColor(CGColor(gray: 1.0, alpha: 1.0))
+        ctx.beginPath()
+        ctx.move(to: pts[0])
+        for i in 1 ..< pts.count { ctx.addLine(to: pts[i]) }
+        ctx.strokePath()
+        ctx.restoreGState()
+
+        // Pass 2: colored line on top, no shadow.
+        ctx.setLineWidth(lineWidth)
+        ctx.setStrokeColor(poly.lineColor)
+        ctx.beginPath()
+        ctx.move(to: pts[0])
+        for i in 1 ..< pts.count { ctx.addLine(to: pts[i]) }
+        ctx.strokePath()
+    }
+
+    override func canDraw(_ mapRect: MKMapRect, zoomScale: MKZoomScale) -> Bool { true }
 }
