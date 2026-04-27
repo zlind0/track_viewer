@@ -28,9 +28,10 @@ struct TrackPoint: Identifiable, Sendable {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 
-    /// GCJ-02 → WGS-84 corrected coordinate, safe to pass to MapKit.
+    /// Coordinates are converted at import time and stored pre-corrected in the DB.
+    /// This is a passthrough; no runtime conversion is needed.
     var wgs84Coordinate: CLLocationCoordinate2D {
-        CoordinateConverter.gcj02ToWgs84(coordinate)
+        coordinate
     }
 
     var localTimeString: String {

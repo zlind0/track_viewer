@@ -41,6 +41,18 @@ struct ContentView: View {
                 }
             }
 
+            // ── 左：刷新（重建缓存）────────────────────────────────
+            if appState.currentFileMD5 != nil {
+                ToolbarItem(placement: .navigation) {
+                    Button {
+                        Task { await appState.refreshCurrentFile() }
+                    } label: {
+                        Label("刷新", systemImage: "arrow.clockwise")
+                    }
+                    .help("清除缓存并重新导入当前文件")
+                }
+            }
+
             // ── 左：返回多日（条件显示）────────────────────────────
             if appState.viewMode == .singleDayFromMulti {
                 ToolbarItem(placement: .navigation) {

@@ -1,4 +1,5 @@
 import Foundation
+import CoreLocation
 import CryptoKit
 
 // MARK: - FileImporter
@@ -73,8 +74,9 @@ enum FileImporter {
 
                 let tzOffset = TimezoneUtils.timezoneOffset(longitude: lon)
                 let dateStr  = TimezoneUtils.localDateString(timestamp: ts, offsetHours: tzOffset)
+                let cvt      = CoordinateConverter.gcj02ToWgs84(CLLocationCoordinate2D(latitude: lat, longitude: lon))
 
-                batch.append((ts, lat, lon, alt, speed, heading, accuracy, distM, dateStr, tzOffset))
+                batch.append((ts, cvt.latitude, cvt.longitude, alt, speed, heading, accuracy, distM, dateStr, tzOffset))
 
                 if batch.count >= 10_000 {
                     let captured = batch
@@ -101,7 +103,8 @@ enum FileImporter {
                 let speed    = Double(fields[6].trimmingCharacters(in: .whitespaces)) ?? -1
                 let distM    = Double(fields[7].trimmingCharacters(in: .whitespaces)) ?? 0
                 let alt      = Double(fields[10].trimmingCharacters(in: .whitespaces)) ?? 0
-                batch.append((ts, lat, lon, alt, speed, heading, accuracy, distM, dateStr, tzOffset))
+                let cvt      = CoordinateConverter.gcj02ToWgs84(CLLocationCoordinate2D(latitude: lat, longitude: lon))
+                batch.append((ts, cvt.latitude, cvt.longitude, alt, speed, heading, accuracy, distM, dateStr, tzOffset))
             }
         }
 
@@ -222,7 +225,8 @@ private final class GPXParser: NSObject, XMLParserDelegate, @unchecked Sendable 
             guard currentTime > 0 else { return }
             let tzOffset = TimezoneUtils.timezoneOffset(longitude: currentLon)
             let dateStr  = TimezoneUtils.localDateString(timestamp: currentTime, offsetHours: tzOffset)
-            batch.append((currentTime, currentLat, currentLon,
+            let cvt      = CoordinateConverter.gcj02ToWgs84(CLLocationCoordinate2D(latitude: currentLat, longitude: currentLon))
+            batch.append((currentTime, cvt.latitude, cvt.longitude,
                           currentEle, currentSpeed, 0, 0, 0,
                           dateStr, tzOffset))
             if batch.count >= 10_000 {

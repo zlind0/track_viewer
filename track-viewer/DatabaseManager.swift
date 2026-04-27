@@ -120,6 +120,13 @@ actor DatabaseManager {
         sqlite3_step(stmt)
     }
 
+    /// Deletes all data for a given file MD5 (track_points, daily_summaries, file_cache).
+    func deleteFileCache(md5: String) {
+        exec("DELETE FROM track_points    WHERE file_md5 = '\(md5)'")
+        exec("DELETE FROM daily_summaries WHERE file_md5 = '\(md5)'")
+        exec("DELETE FROM file_cache      WHERE md5      = '\(md5)'")
+    }
+
     /// Keeps only the 5 most-recently-imported files; removes the rest.
     func trimOldFiles() {
         // Collect MD5s to remove

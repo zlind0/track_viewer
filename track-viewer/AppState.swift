@@ -54,6 +54,9 @@ final class AppState {
 
     private(set) var database: DatabaseManager?
 
+    /// The URL of the most recently opened file, kept in memory for "刷新" to re-import.
+    private var currentFileURL: URL?
+
     // MARK: - UserDefaults Keys
 
     private enum PrefKey {
@@ -130,6 +133,9 @@ final class AppState {
             let md5 = try await Task.detached(priority: .userInitiated) {
                 try FileImporter.md5(of: url)
             }.value
+
+            // 1b. Remember the URL in memory so "刷新" can re-import without needing bookmarks.
+            currentFileURL = url
 
             // 2. Check cache
             let cached = await db.fileCacheExists(md5: md5)
@@ -271,6 +277,32 @@ final class AppState {
             return
         }
         await loadMultiDay(start: s, end: e)
+    }
+
+    // MARK: - Refresh (clear cache + re-import)
+
+    func refreshCurrentFile() async {
+        guard let md5 = currentFileMD5, let db = database else { return }
+
+        guard let fileURL = currentFileURL else {
+            loadError = "找不到文件，请重新通过「打开」按钮选择文件。"
+            return
+        }
+
+        // Wipe the DB cache for this file so importFile won't short-circuit.
+        await db.deleteFileCache(md5: md5)
+
+        // Reset UI state.
+        currentFileMD5   = nil
+        dailySummaries   = []
+        summaryByDate    = [:]
+        currentDayPoints = []
+        selectedDate     = nil
+        multiDayCoords   = [:]
+        multiDaySummaries = []
+
+        // Re-import; importFile will store a fresh bookmark as well.
+        await importFile(fileURL)
     }
 
     // MARK: - Computed Helpers

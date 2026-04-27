@@ -31,37 +31,14 @@ enum CoordinateConverter {
         )
     }
 
+    static func region(for coord: CLLocationCoordinate2D) -> ChinaRegion {
+        ChinaRegionClassifier.region(for: coord)
+    }
+
     // MARK: - Mainland China Boundary
 
-    /// Returns true if the coordinate is within mainland China (uses GCJ-02).
-    ///
-    /// Exclusions applied:
-    ///   - Outside the outer bounding box               → WGS-84
-    ///   - Taiwan (TWD97 / WGS-84)                      → WGS-84
-    ///   - Hong Kong SAR                                 → WGS-84
-    ///   - Macau SAR                                     → WGS-84
-    ///   - South China Sea (below 18°N, east of 109°E)  → WGS-84
-    ///   - Points inside the box but clearly over open
-    ///     ocean or neighbouring countries accept a
-    ///     tiny residual error which is harmless.
     static func isInMainlandChina(lat: Double, lon: Double) -> Bool {
-        // ── Outer bounding box ─────────────────────────────────────
-        guard lat >  17.5  && lat <  55.8 &&
-              lon >  72.0  && lon < 137.8 else { return false }
-
-        // ── Taiwan ─────────────────────────────────────────────────
-        if lat > 21.9 && lat < 25.4 && lon > 119.9 && lon < 122.2 { return false }
-
-        // ── Hong Kong ──────────────────────────────────────────────
-        if lat > 22.0 && lat < 22.7 && lon > 113.8 && lon < 114.6 { return false }
-
-        // ── Macau ──────────────────────────────────────────────────
-        if lat > 22.0 && lat < 22.3 && lon > 113.4 && lon < 113.7 { return false }
-
-        // ── South China Sea open ocean south of Hainan ─────────────
-        if lat < 18.0 && lon > 109.0 { return false }
-
-        return true
+        region(for: CLLocationCoordinate2D(latitude: lat, longitude: lon)) == .mainlandChina
     }
 
     // MARK: - GCJ-02 Forward Offset (Krasovsky 1940 ellipsoid)
