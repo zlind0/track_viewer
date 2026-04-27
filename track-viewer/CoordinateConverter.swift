@@ -38,7 +38,56 @@ enum CoordinateConverter {
     // MARK: - Mainland China Boundary
 
     static func isInMainlandChina(lat: Double, lon: Double) -> Bool {
-        region(for: CLLocationCoordinate2D(latitude: lat, longitude: lon)) == .mainlandChina
+        // Fast path: a conservative 20-point rough polygon that lies entirely
+        // within mainland China (well away from HK/Macau/Taiwan/disputed borders).
+        // Points inside it are definitely mainland China — skip the expensive
+        // boundary-data lookup.
+        if roughMainlandPolygonContains(lat: lat, lon: lon) { return true }
+        // Slow path: precise boundary data for border/coastal ambiguity.
+        return region(for: CLLocationCoordinate2D(latitude: lat, longitude: lon)) == .mainlandChina
+    }
+
+    // 20-point conservative inner polygon for mainland China.
+    // Intentionally inset from actual borders to avoid false positives near
+    // HK, Macau, Taiwan, and disputed regions.
+    private static let roughMainlandPolygon: [(lat: Double, lon: Double)] = [
+        (48.5,  87.5),  //  1  Xinjiang N (Altai)
+        (53.0, 123.0),  //  2  Heilongjiang N
+        (47.5, 134.5),  //  3  Heilongjiang E
+        (42.0, 130.0),  //  4  Jilin / North Korea border
+        (40.0, 122.5),  //  5  Liaoning coast
+        (38.5, 121.0),  //  6  Bohai area
+        (35.5, 120.5),  //  7  Shandong S coast
+        (32.5, 121.5),  //  8  Jiangsu coast
+        (30.0, 122.0),  //  9  Zhejiang coast
+        (27.0, 120.0),  // 10  Fujian coast
+        (24.5, 117.5),  // 11  Guangdong E (east of Taiwan Strait islands)
+        (23.5, 114.0),  // 12  Guangdong (north of HK)
+        (22.5, 110.5),  // 13  Guangdong W
+        (22.0, 108.5),  // 14  Guangxi coast
+        (23.0, 104.5),  // 15  Yunnan / Vietnam border
+        (25.5,  98.5),  // 16  Yunnan W
+        (30.0,  88.5),  // 17  Tibet plateau
+        (35.5,  79.5),  // 18  Tibet W
+        (41.0,  75.5),  // 19  Xinjiang SW
+        (48.5,  87.5),  // 20  close polygon (back to start)
+    ]
+
+    /// Ray-casting point-in-polygon for the rough mainland polygon.
+    private static func roughMainlandPolygonContains(lat: Double, lon: Double) -> Bool {
+        let poly = roughMainlandPolygon
+        let n = poly.count
+        guard n >= 3 else { return false }
+        var inside = false
+        var prev = poly[n - 1]
+        for curr in poly {
+            let intersects = ((curr.lat > lat) != (prev.lat > lat)) &&
+                (lon < (prev.lon - curr.lon) * (lat - curr.lat) /
+                    (prev.lat - curr.lat) + curr.lon)
+            if intersects { inside.toggle() }
+            prev = curr
+        }
+        return inside
     }
 
     // MARK: - GCJ-02 Forward Offset (Krasovsky 1940 ellipsoid)

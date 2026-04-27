@@ -23,6 +23,71 @@ enum FileImporter {
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
+    // MARK: Raw Point
+
+    /// Raw GPS point as parsed from file, before coordinate conversion or timezone resolution.
+    typealias RawPoint = (timestamp: Double, lat: Double, lon: Double,
+                          alt: Double, speed: Double, heading: Double,
+                          accuracy: Double, distanceM: Double)
+
+    // MARK: Parallel Conversion
+
+    /// Converts and timezone-resolves a batch of raw GPS points in parallel.
+    ///
+    /// The batch is divided into N chunks where N = CPU core count clamped to [4, 8].
+    /// Each chunk runs as an independent Swift concurrency task on the global thread pool,
+    /// achieving true multi-core parallelism for the CPU-bound polygon and trig work.
+    static func parallelConvert(
+        _ raw: [RawPoint]
+    ) async -> [(timestamp: Double, lat: Double, lon: Double,
+                 alt: Double, speed: Double, heading: Double,
+                 accuracy: Double, distanceM: Double,
+                 localDate: String, tzOffsetHours: Int)] {
+        guard !raw.isEmpty else { return [] }
+        let workers   = max(4, min(8, ProcessInfo.processInfo.processorCount))
+        let count     = raw.count
+        let chunkSize = max(1, (count + workers - 1) / workers)
+        let numChunks = (count + chunkSize - 1) / chunkSize
+
+        typealias DBRow = (timestamp: Double, lat: Double, lon: Double,
+                           alt: Double, speed: Double, heading: Double,
+                           accuracy: Double, distanceM: Double,
+                           localDate: String, tzOffsetHours: Int)
+
+        return await withTaskGroup(of: (Int, [DBRow]).self) { group in
+            for i in 0..<numChunks {
+                let start = i * chunkSize
+                let end   = min(start + chunkSize, count)
+                let slice = Array(raw[start..<end])
+                group.addTask {
+                    // One DateFormatter per task — never shared across threads.
+                    let fmt = DateFormatter()
+                    fmt.dateFormat = "yyyy-MM-dd"
+                    fmt.locale     = Locale(identifier: "en_US_POSIX")
+                    var lastTzOffset = Int.min
+                    let rows: [DBRow] = slice.map { p in
+                        let cvt = CoordinateConverter.gcj02ToWgs84(
+                            CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon)
+                        )
+                        let tzOffset = TimezoneUtils.timezoneOffset(longitude: p.lon)
+                        if tzOffset != lastTzOffset {
+                            fmt.timeZone = TimeZone(secondsFromGMT: tzOffset * 3600) ?? .current
+                            lastTzOffset = tzOffset
+                        }
+                        let dateStr = fmt.string(from: Date(timeIntervalSince1970: p.timestamp))
+                        return (p.timestamp, cvt.latitude, cvt.longitude,
+                                p.alt, p.speed, p.heading, p.accuracy, p.distanceM,
+                                dateStr, tzOffset)
+                    }
+                    return (i, rows)
+                }
+            }
+            var parts = [(Int, [DBRow])]()
+            for await pair in group { parts.append(pair) }
+            return parts.sorted { $0.0 < $1.0 }.flatMap { $0.1 }
+        }
+    }
+
     // MARK: CSV
 
     /// Streams a CSV file line-by-line and inserts rows into the database.
@@ -42,10 +107,7 @@ enum FileImporter {
         var isFirstLine = true
         var remainder = ""
         let chunkSize = 512 * 1024   // 512 KB read at a time
-        var batch: [(timestamp: Double, lat: Double, lon: Double,
-                     alt: Double, speed: Double, heading: Double,
-                     accuracy: Double, distanceM: Double,
-                     localDate: String, tzOffsetHours: Int)] = []
+        var batch: [RawPoint] = []
         batch.reserveCapacity(10_000)
 
         while true {
@@ -72,17 +134,14 @@ enum FileImporter {
                 let distM    = Double(fields[7].trimmingCharacters(in: .whitespaces)) ?? 0
                 let alt      = Double(fields[10].trimmingCharacters(in: .whitespaces)) ?? 0
 
-                let tzOffset = TimezoneUtils.timezoneOffset(longitude: lon)
-                let dateStr  = TimezoneUtils.localDateString(timestamp: ts, offsetHours: tzOffset)
-                let cvt      = CoordinateConverter.gcj02ToWgs84(CLLocationCoordinate2D(latitude: lat, longitude: lon))
-
-                batch.append((ts, cvt.latitude, cvt.longitude, alt, speed, heading, accuracy, distM, dateStr, tzOffset))
+                batch.append((ts, lat, lon, alt, speed, heading, accuracy, distM))
 
                 if batch.count >= 10_000 {
-                    let captured = batch
-                    try await database.insertTrackPoints(fileMD5: fileMD5, batch: captured) { _ in }
-                    totalInserted += captured.count
+                    let raw = batch
                     batch.removeAll(keepingCapacity: true)
+                    let converted = await parallelConvert(raw)
+                    try await database.insertTrackPoints(fileMD5: fileMD5, batch: converted) { _ in }
+                    totalInserted += converted.count
                     let pct = Double(bytesRead) / Double(fileSize)
                     await onProgress(pct, "已导入 \(totalInserted) 个轨迹点…")
                 }
@@ -96,22 +155,19 @@ enum FileImporter {
                let ts  = Double(fields[0].trimmingCharacters(in: .whitespaces)),
                let lon = Double(fields[2].trimmingCharacters(in: .whitespaces)),
                let lat = Double(fields[3].trimmingCharacters(in: .whitespaces)) {
-                let tzOffset = TimezoneUtils.timezoneOffset(longitude: lon)
-                let dateStr  = TimezoneUtils.localDateString(timestamp: ts, offsetHours: tzOffset)
                 let heading  = Double(fields[4].trimmingCharacters(in: .whitespaces)) ?? 0
                 let accuracy = Double(fields[5].trimmingCharacters(in: .whitespaces)) ?? 0
                 let speed    = Double(fields[6].trimmingCharacters(in: .whitespaces)) ?? -1
                 let distM    = Double(fields[7].trimmingCharacters(in: .whitespaces)) ?? 0
                 let alt      = Double(fields[10].trimmingCharacters(in: .whitespaces)) ?? 0
-                let cvt      = CoordinateConverter.gcj02ToWgs84(CLLocationCoordinate2D(latitude: lat, longitude: lon))
-                batch.append((ts, cvt.latitude, cvt.longitude, alt, speed, heading, accuracy, distM, dateStr, tzOffset))
+                batch.append((ts, lat, lon, alt, speed, heading, accuracy, distM))
             }
         }
 
         if !batch.isEmpty {
-            let captured = batch
-            try await database.insertTrackPoints(fileMD5: fileMD5, batch: captured) { _ in }
-            totalInserted += captured.count
+            let converted = await parallelConvert(batch)
+            try await database.insertTrackPoints(fileMD5: fileMD5, batch: converted) { _ in }
+            totalInserted += converted.count
         }
 
         return totalInserted
@@ -148,10 +204,7 @@ private final class GPXParser: NSObject, XMLParserDelegate, @unchecked Sendable 
     private var currentText = ""
     private var inTrkpt = false
 
-    private var batch: [(timestamp: Double, lat: Double, lon: Double,
-                         alt: Double, speed: Double, heading: Double,
-                         accuracy: Double, distanceM: Double,
-                         localDate: String, tzOffsetHours: Int)] = []
+    private var batch: [FileImporter.RawPoint] = []
     private var totalInserted = 0
     private var parseError: Error?
 
@@ -223,12 +276,8 @@ private final class GPXParser: NSObject, XMLParserDelegate, @unchecked Sendable 
         case "trkpt":
             inTrkpt = false
             guard currentTime > 0 else { return }
-            let tzOffset = TimezoneUtils.timezoneOffset(longitude: currentLon)
-            let dateStr  = TimezoneUtils.localDateString(timestamp: currentTime, offsetHours: tzOffset)
-            let cvt      = CoordinateConverter.gcj02ToWgs84(CLLocationCoordinate2D(latitude: currentLat, longitude: currentLon))
-            batch.append((currentTime, cvt.latitude, cvt.longitude,
-                          currentEle, currentSpeed, 0, 0, 0,
-                          dateStr, tzOffset))
+            batch.append((currentTime, currentLat, currentLon,
+                          currentEle, currentSpeed, 0, 0, 0))
             if batch.count >= 10_000 {
                 flushBatch()
             }
@@ -248,13 +297,14 @@ private final class GPXParser: NSObject, XMLParserDelegate, @unchecked Sendable 
 
     private func flushBatch() {
         guard !batch.isEmpty else { return }
-        let captured = batch
+        let raw = batch
         batch.removeAll(keepingCapacity: true)
-        let count = captured.count
+        let count = raw.count
         // Synchronous call into the actor — acceptable here because we're on a background thread.
         let sema = DispatchSemaphore(value: 0)
         Task {
-            try? await database.insertTrackPoints(fileMD5: fileMD5, batch: captured) { _ in }
+            let converted = await FileImporter.parallelConvert(raw)
+            try? await database.insertTrackPoints(fileMD5: fileMD5, batch: converted) { _ in }
             totalInserted += count
             await onProgress(0, "已导入 \(totalInserted) 个轨迹点…")
             sema.signal()
